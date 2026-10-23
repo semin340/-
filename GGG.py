@@ -1,0 +1,199 @@
+import pygame
+import sys
+
+# 1. 초기화
+pygame.init()
+
+# [중요] 파이게임이 한글 입력기(IME)를 정상적으로 인식하고 수신하도록 활성화
+pygame.key.start_text_input()
+
+# 2. 화면 설정 (1920 x 1080 FHD)
+SCREEN_WIDTH = 1920
+SCREEN_HEIGHT = 1080
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+pygame.display.set_caption("언더테일 스타일 회피 게임 (1920x1080)")
+
+# 3. 시계 설정 (프레임 제어)
+clock = pygame.time.Clock()
+
+# 4. 색상 정의 (RGB)
+BLACK = (0, 0, 0)
+WHITE = (255, 255, 255)
+PINK = (255, 105, 180)
+RED = (255, 50, 50)
+GRAY = (100, 100, 100)
+YELLOW = (255, 255, 0)
+
+# 5. 폰트 설정 (한글 출력을 위해 "malgungothic" 적용)
+try:
+    font = pygame.font.SysFont("malgungothic", 50)
+    font_large = pygame.font.SysFont("malgungothic", 70, bold=True)
+except:
+    font = pygame.font.SysFont(None, 50)
+    font_large = pygame.font.SysFont(None, 70)
+
+# 6. 회피 박스 설정
+box_width = 900
+box_height = 450
+box_x = (SCREEN_WIDTH - box_width) // 2   
+box_y = (SCREEN_HEIGHT - box_height) // 2 
+box_thickness = 8  
+
+# 7. 플레이어(핑크 네모) 설정
+player_size = 40  
+player_x = box_x + box_width // 2 - player_size // 2
+player_y = box_y + box_height // 2 - player_size // 2
+player_speed = 8  
+
+# 8. 게임 상태 및 데이터 변수
+max_hp = 100
+current_hp = 100
+elapsed_time = 0.0  
+
+# --- 입력창 및 데이터 변수 ---
+input_mode = True  # True이면 입력 단계, False이면 게임 플레이 단계
+active_input = "name"  # "name" 또는 "student_id"
+
+player_name = ""
+student_id = ""
+
+input_box_width = 600
+input_box_height = 80
+name_box_rect = pygame.Rect((SCREEN_WIDTH - input_box_width) // 2, 450, input_box_width, input_box_height)
+id_box_rect = pygame.Rect((SCREEN_WIDTH - input_box_width) // 2, 630, input_box_width, input_box_height)
+# ----------------------------------------
+
+# 9. 게임 메인 루프
+while True:
+    # 9-1. Delta Time 계산
+    dt = clock.tick(60) / 1000.0  
+
+    # 9-2. 이벤트 처리
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            pygame.quit()
+            sys.exit()
+
+        # [입력 모드 이벤트 처리]
+        if input_mode:
+            # 1. 키보드 제어키 처리
+            if event.type == pygame.KEYDOWN:
+                # 엔터키 감지
+                if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
+                    # [수정] 이름과 학번 칸이 둘 다 공백이 아닐 때만 게임 시작 허용!
+                    if player_name.strip() != "" and student_id.strip() != "":
+                        input_mode = False
+                        # 게임 시작 시 입력기 종료 (게임 조작 시 오작동 방지)
+                        pygame.key.stop_text_input()
+                        print(f"[게임 시작] 이름: {player_name}, 학번: {student_id}")
+                    
+                # 지우기 키 감지
+                elif event.key == pygame.K_BACKSPACE:
+                    if active_input == "name":
+                        player_name = player_name[:-1]
+                    elif active_input == "student_id":
+                        student_id = student_id[:-1]
+                        
+                # 탭 및 방향키로 입력란 교체
+                elif event.key in [pygame.K_TAB, pygame.K_DOWN, pygame.K_UP]:
+                    active_input = "student_id" if active_input == "name" else "name"
+
+            # 2. 글자 타이핑 처리 (활성화된 IME를 통해 한글/영문 모두 정상 수신)
+            elif event.type == pygame.TEXTINPUT:
+                if active_input == "name" and len(player_name) < 10:
+                    player_name += event.text
+                elif active_input == "student_id" and len(student_id) < 15:
+                    # 학번은 숫자만 입력받도록 필터링
+                    if event.text.isdigit():
+                        student_id += event.text
+
+            # 3. 마우스 클릭 선택 처리
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if name_box_rect.collidepoint(event.pos):
+                    active_input = "name"
+                elif id_box_rect.collidepoint(event.pos):
+                    active_input = "student_id"
+
+    # 화면을 검은색으로 채우기
+    screen.fill(BLACK)
+
+    # ==================== [모드 1: 이름 및 학번 입력 화면] ====================
+    if input_mode:
+        title_text = font_large.render("ENTER YOUR INFO", True, WHITE)
+        title_rect = title_text.get_rect(center=(SCREEN_WIDTH // 2, 280))
+        screen.blit(title_text, title_rect)
+
+        # 1. 이름 입력창
+        name_label = font.render("이름", True, YELLOW if active_input == "name" else GRAY)
+        screen.blit(name_label, (name_box_rect.x - 180, name_box_rect.y + 10))
+        pygame.draw.rect(screen, YELLOW if active_input == "name" else GRAY, name_box_rect, 4)
+        
+        if player_name == "":
+            name_surf = font.render("이름을 입력하세요...", True, GRAY)
+        else:
+            name_surf = font.render(player_name, True, WHITE)
+        screen.blit(name_surf, (name_box_rect.x + 20, name_box_rect.y + 12))
+
+        # 2. 학번 입력창
+        id_label = font.render("학번", True, YELLOW if active_input == "student_id" else GRAY)
+        screen.blit(id_label, (id_box_rect.x - 180, id_box_rect.y + 10))
+        pygame.draw.rect(screen, YELLOW if active_input == "student_id" else GRAY, id_box_rect, 4)
+        
+        if student_id == "":
+            id_surf = font.render("학번을 입력하세요...", True, GRAY)
+        else:
+            id_surf = font.render(student_id, True, WHITE)
+        screen.blit(id_surf, (id_box_rect.x + 20, id_box_rect.y + 12))
+
+        # 3. 하단 안내 메시지
+        # 두 칸 모두 써야 넘어간다는 경고 성격의 문구로 수정
+        if player_name.strip() != "" and student_id.strip() != "":
+            info_text = font.render("Press [ ENTER ] to Start Game", True, YELLOW)
+        else:
+            info_text = font.render("Please fill out BOTH fields!", True, RED)
+            
+        info_rect = info_text.get_rect(center=(SCREEN_WIDTH // 2, 850))
+        screen.blit(info_text, info_rect)
+
+    # ==================== [모드 2: 실제 게임 플레이 화면] ====================
+    else:
+        # 9-3. 타이머 증가
+        elapsed_time += dt
+
+        # 9-4. 키보드 입력 처리 (WASD)
+        keys = pygame.key.get_pressed()
+        if keys[pygame.K_w]: player_y -= player_speed
+        if keys[pygame.K_s]: player_y += player_speed
+        if keys[pygame.K_a]: player_x -= player_speed
+        if keys[pygame.K_d]: player_x += player_speed
+
+        # 9-5. 플레이어가 박스 밖으로 나가지 못하게 제한
+        if player_x < box_x + box_thickness:
+            player_x = box_x + box_thickness
+        if player_x + player_size > box_x + box_width - box_thickness:
+            player_x = box_x + box_width - box_thickness - player_size
+        if player_y < box_y + box_thickness:
+            player_y = box_y + box_thickness
+        if player_y + player_size > box_y + box_height - box_thickness:
+            player_y = box_y + box_height - box_thickness - player_size
+
+        # 9-7. 언더테일 박스 그리기
+        pygame.draw.rect(screen, WHITE, (box_x, box_y, box_width, box_height), box_thickness)
+        pygame.draw.rect(screen, BLACK, (box_x + box_thickness, box_y + box_thickness, 
+                                         box_width - (box_thickness * 2), box_height - (box_thickness * 2)))
+
+        # 9-8. 핑크색 네모(플레이어) 그리기
+        pygame.draw.rect(screen, PINK, (player_x, player_y, player_size, player_size))
+
+        # 9-9. UI 텍스트 그리기
+        user_info_text = font.render(f"PLAYER : {student_id} {player_name}", True, YELLOW)
+        screen.blit(user_info_text, (box_x, box_y - 140))
+
+        hp_text = font.render(f"HP : {int(current_hp)} / {max_hp}", True, WHITE)
+        screen.blit(hp_text, (box_x, box_y + box_height + 30))
+
+        time_text = font.render(f"TIME : {elapsed_time:.1f}s", True, WHITE)
+        screen.blit(time_text, (box_x, box_y - 70))
+
+    # 9-10. 화면 업데이트
+    pygame.display.flip()
