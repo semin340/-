@@ -1,0 +1,1451 @@
+import math
+import random
+import json
+from pathlib import Path
+import pygame
+
+pygame.init()
+
+# =========================
+# 기본 설정
+# =========================
+W, H = 800, 600
+screen = pygame.display.set_mode((W, H))
+pygame.display.set_caption("SOUL JUMP - 수학 보스")
+clock = pygame.time.Clock()
+
+FONT = pygame.font.SysFont("malgungothic", 22)
+BIG = pygame.font.SysFont("malgungothic", 38, bold=True)
+LOGIC_FONT = pygame.font.SysFont("malgungothic", 20)
+SMALL_FONT = pygame.font.SysFont("malgungothic", 15)
+RULE_FONT = pygame.font.SysFont("malgungothic", 17)
+
+BLACK = (10, 8, 20)
+WHITE = (245, 245, 255)
+RED = (255, 65, 95)
+BRIGHT_RED = (255, 0, 0)
+CYAN = (80, 230, 255)
+PURPLE = (175, 90, 255)
+YELLOW = (255, 220, 80)
+ORANGE = (255, 110, 45)
+GREEN = (100, 255, 150)
+
+LEADERBOARD_FILE = Path(__file__).with_name(
+    "soul_jump_ranking.json"
+)
+
+try:
+    leaderboard = json.loads(
+        LEADERBOARD_FILE.read_text(encoding="utf-8")
+    )
+    if not isinstance(leaderboard, list):
+        leaderboard = []
+except (FileNotFoundError, json.JSONDecodeError, OSError):
+    leaderboard = []
+
+leaderboard = [
+    row for row in leaderboard
+    if isinstance(row, dict) and "survival_time" in row
+]
+
+# =========================
+# 화면 및 참가자 정보
+# =========================
+screen_mode = "rules"
+input_mode = False
+active_input = "name"
+player_name = ""
+student_id = ""
+
+input_box_width = 360
+input_box_height = 48
+
+name_box_rect = pygame.Rect(
+    (W - input_box_width) // 2, 225,
+    input_box_width, input_box_height
+)
+id_box_rect = pygame.Rect(
+    (W - input_box_width) // 2, 315,
+    input_box_width, input_box_height
+)
+
+# =========================
+# 경기장
+# =========================
+ARENA = pygame.Rect(100, 145, 600, 385)
+
+QUIZ_PANEL = pygame.Rect(
+    ARENA.left + 35, ARENA.top + 12,
+    ARENA.width - 70, 91
+)
+
+TIMEBAR_X = ARENA.left
+TIMEBAR_Y = ARENA.bottom + 5
+TIMEBAR_W = ARENA.width
+TIMEBAR_H = 11
+
+BOSSES = [{
+    "name": "수학의 지배자",
+    "color": CYAN,
+    "hp": 260,
+    "speed": 1.0,
+}]
+
+final_score = 0
+score_saved = False
+game_start_ticks = 0
+final_survival_time = 0.0
+
+# =========================
+# 그리기 도구
+# =========================
+def draw_text(text, x, y, color=WHITE, font=FONT):
+    image = font.render(str(text), True, color)
+    screen.blit(image, (x, y))
+
+
+def draw_centered_text(text, rect, color=WHITE, font=FONT):
+    image = font.render(str(text), True, color)
+    screen.blit(image, image.get_rect(center=rect.center))
+
+
+def draw_background_stars():
+    for i in range(35):
+        x = (i * 127 + 23) % W
+        y = (i * 83 + 17) % H
+        pygame.draw.circle(screen, (45, 40, 70), (x, y), 1)
+
+
+# =========================
+# 규칙 화면
+# =========================
+def draw_rules_screen():
+    screen.fill(BLACK)
+    draw_background_stars()
+
+    title = BIG.render("SOUL JUMP - 게임 규칙", True, CYAN)
+    screen.blit(title, title.get_rect(center=(W // 2, 48)))
+
+    rules = [
+        ("[ 게임 목표 ]", YELLOW),
+        ("수학 보스의 HP를 0으로 만들거나 공격을 피하며 생존하세요.", WHITE),
+        ("게임 종료 후 점수, 생존시간, 참가자 랭킹을 확인할 수 있습니다.", WHITE),
+        ("[ 조작 방법 ]", YELLOW),
+        ("이동: 방향키 또는 W / A / S / D", WHITE),
+        ("점프: SPACE  |  공격: E", WHITE),
+        ("점프 중에는 지상 탄환을 피할 수 있습니다.", WHITE),
+        ("[ 명제 퀴즈 ]", YELLOW),
+        ("화면의 명제를 읽고 판단하세요.", WHITE),
+        ("공격해야 하면 제한 시간 안에 E를 누르세요.", WHITE),
+        ("공격하면 안 되면 E를 누르지 말고 기다리세요.", WHITE),
+        ("정답을 맞히면 보스에게 추가 피해를 줍니다.", WHITE),
+        ("오답을 선택하면 플레이어 HP가 감소할 수 있습니다.", WHITE),
+        ("[ 점수 및 랭킹 ]", YELLOW),
+        ("왼쪽에는 점수와 생존시간, 오른쪽에는 상위 10명이 표시됩니다.", WHITE),
+        ("같은 이름과 학번은 더 오래 생존했을 때 기록이 갱신됩니다.", WHITE),
+    ]
+
+    y = 92
+    for text, color in rules:
+        draw_text(text, 58, y, color, RULE_FONT)
+        y += 24
+
+    button = pygame.Rect(190, 505, 420, 55)
+    pygame.draw.rect(screen, (35, 30, 65), button, border_radius=12)
+    pygame.draw.rect(screen, CYAN, button, 2, border_radius=12)
+    draw_centered_text("ENTER: 참가자 정보 입력", button, YELLOW)
+
+    draw_centered_text(
+        "ESC: 종료", pygame.Rect(0, 566, W, 25),
+        (165, 165, 190), SMALL_FONT
+    )
+
+
+# =========================
+# 플레이어
+# =========================
+class Player:
+    def __init__(self):
+        self.x = 400
+        self.y = 440
+        self.r = 10
+        self.hp = 5
+
+        self.jump = 0
+        self.jump_time = 0
+        self.jump_cooldown = 0
+
+        self.invincible = 0
+        self.hit_flash = 0
+        self.shoot_cooldown = 0
+
+    def update(self, keys):
+        speed = 4
+
+        dx = (
+            int(keys[pygame.K_RIGHT] or keys[pygame.K_d])
+            - int(keys[pygame.K_LEFT] or keys[pygame.K_a])
+        )
+        dy = (
+            int(keys[pygame.K_DOWN] or keys[pygame.K_s])
+            - int(keys[pygame.K_UP] or keys[pygame.K_w])
+        )
+
+        if dx and dy:
+            dx *= 0.7071
+            dy *= 0.7071
+
+        self.x += dx * speed
+        self.y += dy * speed
+
+        self.x = max(
+            ARENA.left + 14,
+            min(ARENA.right - 14, self.x)
+        )
+        self.y = max(
+            ARENA.top + 14,
+            min(ARENA.bottom - 14, self.y)
+        )
+
+        if self.jump_cooldown > 0:
+            self.jump_cooldown -= 1
+
+        if self.invincible > 0:
+            self.invincible -= 1
+
+        if self.hit_flash > 0:
+            self.hit_flash -= 1
+
+        if self.shoot_cooldown > 0:
+            self.shoot_cooldown -= 1
+
+        if self.jump_time > 0:
+            self.jump_time -= 1
+            t = 1 - self.jump_time / 32
+            self.jump = math.sin(t * math.pi) * 48
+        else:
+            self.jump = 0
+
+    def do_jump(self):
+        if self.jump_cooldown <= 0 and self.jump_time <= 0:
+            self.jump_time = 32
+            self.jump_cooldown = 48
+
+    def draw(self):
+        pygame.draw.ellipse(
+            screen, (65, 55, 80),
+            (self.x - 12, self.y - 5, 24, 10)
+        )
+
+        draw_y = int(self.y - self.jump)
+
+        points = [
+            (self.x, draw_y - 12),
+            (self.x + 12, draw_y - 2),
+            (self.x + 9, draw_y + 9),
+            (self.x, draw_y + 14),
+            (self.x - 9, draw_y + 9),
+            (self.x - 12, draw_y - 2),
+        ]
+
+        # 피격 시 약 0.1초 동안 선명한 빨간색
+        if self.hit_flash > 0:
+            pygame.draw.polygon(screen, BRIGHT_RED, points)
+            pygame.draw.polygon(screen, WHITE, points, 2)
+        else:
+            # 피격 후 무적 시간에는 깜빡이는 효과
+            if self.invincible > 0 and (self.invincible // 4) % 2 == 0:
+                return
+
+            pygame.draw.polygon(screen, RED, points)
+
+        pygame.draw.circle(
+            screen, WHITE, (self.x - 3, draw_y), 2
+        )
+        pygame.draw.circle(
+            screen, WHITE, (self.x + 3, draw_y), 2
+        )
+
+
+def damage_player():
+    """플레이어가 피해를 받을 때 공통 처리."""
+    global game_state
+
+    if player.invincible > 0:
+        return
+
+    player.hp -= 1
+    player.invincible = 75
+    player.hit_flash = 6
+
+    if player.hp <= 0:
+        game_state = "lose"
+
+
+# =========================
+# 탄환 및 플레이어 공격
+# =========================
+class Bullet:
+    def __init__(
+        self, x, y, vx, vy, color,
+        radius=7, ground=True, life=360,
+        ax=0.0, ay=0.0
+    ):
+        self.x = float(x)
+        self.y = float(y)
+        self.vx = vx
+        self.vy = vy
+        self.ax = ax
+        self.ay = ay
+        self.color = color
+        self.r = radius
+        self.ground = ground
+        self.life = life
+
+    def update(self):
+        self.vx += self.ax
+        self.vy += self.ay
+        self.x += self.vx
+        self.y += self.vy
+        self.life -= 1
+
+    def draw(self):
+        pygame.draw.circle(
+            screen, self.color,
+            (int(self.x), int(self.y)), self.r
+        )
+        pygame.draw.circle(
+            screen, WHITE,
+            (int(self.x - 2), int(self.y - 2)),
+            max(1, self.r // 3)
+        )
+
+    def alive(self):
+        return (
+            self.life > 0
+            and -40 < self.x < W + 40
+            and -50 < self.y < H + 50
+        )
+
+
+class Shot:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.vy = -8
+        self.r = 5
+
+    def update(self):
+        self.y += self.vy
+
+    def draw(self):
+        pygame.draw.circle(
+            screen, CYAN,
+            (int(self.x), int(self.y)), self.r
+        )
+
+
+# =========================
+# 전투 상태
+# =========================
+player = Player()
+bullets = []
+shots = []
+
+boss_index = 0
+boss_hp = BOSSES[boss_index]["hp"]
+boss_max_hp = boss_hp
+
+frame = 0
+pattern_timer = 0
+pattern_index = 0
+current_pattern_name = "준비"
+
+game_state = "playing"
+message_timer = 0
+
+# =========================
+# 명제 퀴즈
+# =========================
+logic_forms = [
+    ("원명제", "보스가 파란색이면 공격"),
+    ("역", "공격하면 보스가 파란색"),
+    ("이", "보스가 파란색이 아니면 공격하지 않는다"),
+    ("대우", "공격하지 않으면 보스가 파란색이 아니다"),
+]
+
+logic_round_active = False
+logic_round_timer = 0
+logic_cooldown = 180
+
+logic_form_index = 0
+logic_boss_blue = True
+logic_should_attack = True
+
+logic_feedback = ""
+logic_feedback_timer = 0
+
+LOGIC_TIME_LIMIT = 300
+
+# =========================
+# 레이저
+# =========================
+laser_x = None
+laser_timer = 0
+
+
+# =========================
+# 탄막 생성 도구
+# =========================
+def add_bullet(
+    x, y, angle, speed, color,
+    radius=7, ground=True, life=360,
+    ax=0.0, ay=0.0
+):
+    vx = math.cos(angle) * speed
+    vy = math.sin(angle) * speed
+
+    bullets.append(
+        Bullet(
+            x, y, vx, vy, color,
+            radius, ground, life, ax, ay
+        )
+    )
+
+
+def aim_angle(x1, y1, x2, y2):
+    return math.atan2(y2 - y1, x2 - x1)
+
+
+def fan_attack(count, spread, speed, color, ground=True):
+    angle = aim_angle(400, 95, player.x, player.y)
+
+    for i in range(count):
+        a = angle + (i - (count - 1) / 2) * spread
+        add_bullet(
+            400, 95, a, speed, color,
+            radius=7, ground=ground
+        )
+
+
+def ring_attack(count, speed, color, offset=0, ground=True):
+    for i in range(count):
+        a = math.tau * i / count + offset
+        add_bullet(
+            400, 95, a, speed, color,
+            radius=7, ground=ground
+        )
+
+
+def aimed_attack(count, speed, color, ground=False):
+    for _ in range(count):
+        a = aim_angle(400, 95, player.x, player.y)
+        a += random.uniform(-0.15, 0.15)
+        add_bullet(
+            400, 95, a, speed, color,
+            radius=8, ground=ground
+        )
+
+
+def edge_attack(count, speed, color):
+    for _ in range(count):
+        y = random.randint(ARENA.top + 15, ARENA.bottom - 15)
+
+        for x in (ARENA.left - 5, ARENA.right + 5):
+            a = aim_angle(x, y, player.x, player.y)
+            add_bullet(
+                x, y, a, speed, color,
+                radius=7, ground=True
+            )
+
+
+def rain_attack(count, color):
+    for _ in range(count):
+        x = random.randint(ARENA.left + 10, ARENA.right - 10)
+        y = ARENA.top - random.randint(10, 130)
+
+        add_bullet(
+            x, y, math.pi / 2,
+            random.uniform(3, 4), color,
+            radius=7, ground=True
+        )
+
+
+def laser_attack():
+    global laser_x, laser_timer
+
+    laser_x = random.randint(
+        ARENA.left + 25, ARENA.right - 25
+    )
+    laser_timer = 48
+
+
+# =========================
+# 보스 패턴
+# =========================
+def spawn_pattern():
+    global pattern_index, current_pattern_name
+
+    p = pattern_index
+    left = ARENA.left + 8
+    right = ARENA.right - 8
+    top = ARENA.top + 8
+    bottom = ARENA.bottom - 8
+
+    # 1. 이차함수: 좌우에서 들어오는 교차 탄막
+    if p == 0:
+        current_pattern_name = "이차함수 | 포물선 교차"
+
+        for side in (0, 1):
+            for i in range(7):
+                y = top + 20 + i * 52
+                x = left if side == 0 else right
+                vx = 2.3 if side == 0 else -2.3
+                vy = -1.2 if i % 2 == 0 else 1.2
+
+                bullets.append(
+                    Bullet(
+                        x, y, vx, vy,
+                        CYAN if side == 0 else PURPLE,
+                        radius=8,
+                        ground=False,
+                        ay=0.02 if i % 2 == 0 else -0.02
+                    )
+                )
+
+    # 2. 일차함수: 좌우와 위쪽에서 들어오는 탄막
+    elif p == 1:
+        current_pattern_name = "일차함수 | 기울기 교차"
+
+        for i in range(6):
+            y = top + 20 + i * 62
+
+            add_bullet(
+                left, y, 0, 3.0,
+                YELLOW, radius=7, ground=False
+            )
+            add_bullet(
+                right, y, math.pi, 3.0,
+                CYAN, radius=7, ground=False
+            )
+
+        for i in range(5):
+            x = left + 45 + i * 130
+
+            add_bullet(
+                x, top, math.pi / 2 + 0.12,
+                2.7, PURPLE, radius=7, ground=False
+            )
+
+    # 3. 원의 방정식: 다중 확산 링
+    elif p == 2:
+        current_pattern_name = "원의 방정식 | 다중 확산 링"
+
+        cx = ARENA.centerx
+        cy = ARENA.top + 18
+
+        ring_settings = [
+            (12, 1.9, 0.00, PURPLE),
+            (12, 2.3, math.pi / 12, CYAN),
+            (12, 2.7, math.pi / 6, YELLOW),
+        ]
+
+        for count, speed, offset, color in ring_settings:
+            for i in range(count):
+                angle = math.tau * i / count + offset
+
+                add_bullet(
+                    cx, cy, angle, speed, color,
+                    radius=5, ground=False, life=360
+                )
+
+    # 4. 좌표와 거리: 여러 방향에서 조준 탄막
+    elif p == 3:
+        current_pattern_name = "좌표와 거리 | 다방향 추적"
+
+        points = [
+            (left, top),
+            (right, top),
+            (left, bottom),
+            (right, bottom),
+            (ARENA.centerx, top),
+            (ARENA.centerx - 130, top),
+            (ARENA.centerx + 130, top),
+        ]
+
+        for i, (x, y) in enumerate(points):
+            a = aim_angle(x, y, player.x, player.y)
+            a += -0.09 if i % 2 == 0 else 0.09
+
+            add_bullet(
+                x, y, a,
+                2.7 + (i % 2) * 0.2,
+                CYAN if i % 2 == 0 else YELLOW,
+                radius=8, ground=False
+            )
+
+        fan_attack(
+            5, 0.17, 2.5, PURPLE, ground=False
+        )
+
+    # 5. 점과 직선 사이의 거리: 평행 탄막
+    elif p == 4:
+        current_pattern_name = "점과 직선 사이의 거리 | 평행선"
+
+        for lane in range(5):
+            y = top + 25 + lane * 75
+
+            for offset in (0, 18):
+                add_bullet(
+                    left, y + offset, -0.05, 2.9,
+                    RED, radius=7, ground=False
+                )
+                add_bullet(
+                    right, y + offset, math.pi + 0.05, 2.9,
+                    ORANGE, radius=7, ground=False
+                )
+
+    # 6. 명제: 빽빽하지만 넓은 안전 통로가 있는 탄막
+    elif p == 5:
+        current_pattern_name = "명제 | 안전 통로 탄막"
+
+        safe_width = 230
+        margin = 15
+
+        safe_left = random.randint(
+            ARENA.left + margin,
+            ARENA.right - margin - safe_width
+        )
+        safe_right = safe_left + safe_width
+
+        bullet_spacing = 28
+        bullet_radius = 7
+        buffer = player.r + bullet_radius + 10
+
+        for x in range(
+            ARENA.left + 12,
+            ARENA.right - 8,
+            bullet_spacing
+        ):
+            if safe_left - buffer <= x <= safe_right + buffer:
+                continue
+
+            add_bullet(
+                x,
+                top,
+                math.pi / 2,
+                random.uniform(3.0, 3.6),
+                GREEN if x < safe_left else RED,
+                radius=bullet_radius,
+                ground=False
+            )
+
+    # 7. 산술·기하평균: 좌우 탄막과 중앙 탄막
+    elif p == 6:
+        current_pattern_name = "산술·기하평균 | 균형 붕괴"
+
+        for i in range(7):
+            y = top + 20 + i * 50
+
+            add_bullet(
+                left, y, 0, 2.6 + i * 0.07,
+                YELLOW, radius=7, ground=False
+            )
+
+            add_bullet(
+                right, y, math.pi, 3.1 - i * 0.06,
+                CYAN, radius=7, ground=False
+            )
+
+        for i in range(4):
+            y = top + 45 + i * 90
+
+            add_bullet(
+                ARENA.centerx - 45, y,
+                math.pi / 2 + 0.22, 2.4,
+                WHITE, radius=7, ground=False
+            )
+
+            add_bullet(
+                ARENA.centerx + 45, y,
+                math.pi / 2 - 0.22, 2.4,
+                PURPLE, radius=7, ground=False
+            )
+
+    # 8. 합성함수: 휘어지는 탄환 파동
+    else:
+        current_pattern_name = "합성함수 | 차원 파동"
+
+        for i in range(7):
+            x = left + 30 + i * 90
+            direction = 1 if i % 2 == 0 else -1
+
+            bullets.append(
+                Bullet(
+                    x, top,
+                    direction * 0.38, 2.6,
+                    PURPLE if i % 2 == 0 else CYAN,
+                    radius=8,
+                    ground=False,
+                    ax=-0.02 if i % 2 == 0 else 0.02
+                )
+            )
+
+            bullets.append(
+                Bullet(
+                    x, bottom,
+                    -direction * 0.38, -2.6,
+                    YELLOW if i % 2 == 0 else RED,
+                    radius=8,
+                    ground=False,
+                    ax=0.02 if i % 2 == 0 else -0.02
+                )
+            )
+
+    pattern_index = (pattern_index + 1) % 8
+
+
+# =========================
+# 명제 퀴즈 처리
+# =========================
+def start_logic_round():
+    global logic_round_active, logic_round_timer
+    global logic_form_index, logic_boss_blue
+    global logic_should_attack, logic_feedback
+
+    logic_form_index = random.randrange(len(logic_forms))
+    logic_boss_blue = random.choice([True, False])
+
+    logic_should_attack = logic_form_index in (0, 3)
+
+    logic_round_active = True
+    logic_round_timer = LOGIC_TIME_LIMIT
+    logic_feedback = ""
+
+
+def finish_logic_round(correct, message):
+    global logic_round_active, logic_cooldown
+    global logic_feedback, logic_feedback_timer, boss_hp
+
+    logic_round_active = False
+    logic_cooldown = 210
+
+    if correct:
+        logic_feedback = message
+        logic_feedback_timer = 75
+        boss_hp -= 12
+    else:
+        logic_feedback = "오답! HP -1"
+        logic_feedback_timer = 75
+        damage_player()
+
+
+# =========================
+# 레이저 그리기
+# =========================
+def draw_laser():
+    if laser_x is None:
+        return
+
+    if laser_timer > 18:
+        pygame.draw.line(
+            screen, (255, 100, 100),
+            (laser_x, ARENA.top), (laser_x, ARENA.bottom), 3
+        )
+    else:
+        pygame.draw.line(
+            screen, WHITE,
+            (laser_x, ARENA.top), (laser_x, ARENA.bottom), 12
+        )
+        pygame.draw.line(
+            screen, RED,
+            (laser_x, ARENA.top), (laser_x, ARENA.bottom), 6
+        )
+
+
+# =========================
+# 퀴즈 패널
+# =========================
+def draw_quiz_panel():
+    pygame.draw.rect(
+        screen, (20, 24, 48), QUIZ_PANEL, border_radius=9
+    )
+
+    border_color = YELLOW if logic_round_active else (95, 85, 130)
+    pygame.draw.rect(
+        screen, border_color, QUIZ_PANEL, 2, border_radius=9
+    )
+
+    form_name, statement = logic_forms[logic_form_index]
+
+    draw_text(
+        f"명제 퀴즈 | {form_name}",
+        QUIZ_PANEL.x + 12, QUIZ_PANEL.y + 7,
+        YELLOW, LOGIC_FONT
+    )
+    draw_text(
+        statement,
+        QUIZ_PANEL.x + 12, QUIZ_PANEL.y + 36,
+        WHITE, SMALL_FONT
+    )
+
+    if logic_round_active:
+        seconds = math.ceil(logic_round_timer / 60)
+        draw_text(
+            f"{seconds}초",
+            QUIZ_PANEL.right - 75, QUIZ_PANEL.y + 7,
+            CYAN, LOGIC_FONT
+        )
+        draw_text(
+            "동치이면 E 공격 | 아니면 기다리기",
+            QUIZ_PANEL.x + 12, QUIZ_PANEL.y + 61,
+            CYAN, SMALL_FONT
+        )
+    elif logic_feedback_timer > 0:
+        feedback_color = GREEN if "정답" in logic_feedback else RED
+        draw_text(
+            logic_feedback,
+            QUIZ_PANEL.x + 12, QUIZ_PANEL.y + 61,
+            feedback_color, SMALL_FONT
+        )
+    else:
+        draw_text(
+            "퀴즈 준비 중...",
+            QUIZ_PANEL.x + 12, QUIZ_PANEL.y + 61,
+            (165, 165, 190), SMALL_FONT
+        )
+
+
+def draw_logic_timebar():
+    pygame.draw.rect(
+        screen, (55, 35, 55),
+        (TIMEBAR_X, TIMEBAR_Y, TIMEBAR_W, TIMEBAR_H),
+        border_radius=5
+    )
+
+    if logic_round_active:
+        ratio = max(
+            0.0,
+            min(1.0, logic_round_timer / LOGIC_TIME_LIMIT)
+        )
+        fill_width = int(TIMEBAR_W * ratio)
+
+        if ratio > 0.55:
+            bar_color = GREEN
+        elif ratio > 0.25:
+            bar_color = YELLOW
+        else:
+            bar_color = RED
+
+        if fill_width > 0:
+            pygame.draw.rect(
+                screen, bar_color,
+                (TIMEBAR_X, TIMEBAR_Y, fill_width, TIMEBAR_H),
+                border_radius=5
+            )
+    else:
+        pygame.draw.rect(
+            screen, (70, 60, 90),
+            (TIMEBAR_X, TIMEBAR_Y, TIMEBAR_W, TIMEBAR_H),
+            1, border_radius=5
+        )
+
+
+# =========================
+# 경기장 그리기
+# =========================
+def draw_arena():
+    screen.fill(BLACK)
+    draw_background_stars()
+
+    pygame.draw.rect(screen, (20, 15, 35), ARENA)
+
+    for gx in range(ARENA.left + 30, ARENA.right, 30):
+        pygame.draw.line(
+            screen, (32, 35, 65),
+            (gx, ARENA.top), (gx, ARENA.bottom), 1
+        )
+
+    for gy in range(ARENA.top + 30, ARENA.bottom, 30):
+        pygame.draw.line(
+            screen, (32, 35, 65),
+            (ARENA.left, gy), (ARENA.right, gy), 1
+        )
+
+    pygame.draw.line(
+        screen, (65, 90, 130),
+        (ARENA.left, ARENA.centery),
+        (ARENA.right, ARENA.centery), 2
+    )
+    pygame.draw.line(
+        screen, (65, 90, 130),
+        (ARENA.centerx, ARENA.top),
+        (ARENA.centerx, ARENA.bottom), 2
+    )
+    pygame.draw.rect(screen, WHITE, ARENA, 3)
+
+    boss = BOSSES[boss_index]
+    pulse = math.sin(frame * 0.06) * 4
+    bx, by = 400, 85
+
+    display_boss_color = CYAN if logic_boss_blue else ORANGE
+
+    pygame.draw.circle(
+        screen, display_boss_color,
+        (bx, by), int(25 + pulse)
+    )
+    pygame.draw.circle(screen, WHITE, (bx - 8, by - 3), 5)
+    pygame.draw.circle(screen, WHITE, (bx + 8, by - 3), 5)
+    pygame.draw.circle(screen, BLACK, (bx - 8, by - 3), 2)
+    pygame.draw.circle(screen, BLACK, (bx + 8, by - 3), 2)
+
+    draw_text(f"{boss['name']} - FINAL EXAM", 100, 12)
+    draw_text("π", bx - 48, by - 27, PURPLE, BIG)
+    draw_text("√x", bx + 28, by - 28, YELLOW, FONT)
+
+    pygame.draw.rect(
+        screen, (65, 30, 45), (100, 43, 600, 16)
+    )
+    pygame.draw.rect(
+        screen, boss["color"],
+        (
+            100, 43,
+            max(0, int(600 * boss_hp / boss_max_hp)), 16
+        )
+    )
+
+    draw_text("HP", 100, 70, RED)
+
+    for i in range(5):
+        color = RED if i < player.hp else (65, 35, 45)
+        pygame.draw.rect(
+            screen, color, (140 + i * 27, 75, 20, 10)
+        )
+
+    draw_text(f"패턴 {pattern_index + 1}/8", 570, 70, YELLOW)
+    draw_text(current_pattern_name, 100, 112, CYAN)
+    draw_text(
+        f"PLAYER: {student_id} {player_name}",
+        100, 135, YELLOW, SMALL_FONT
+    )
+
+    draw_quiz_panel()
+    draw_logic_timebar()
+
+
+# =========================
+# 게임 초기화
+# =========================
+def reset_game():
+    global player, bullets, shots
+    global boss_index, boss_hp, boss_max_hp
+    global frame, pattern_timer, pattern_index
+    global current_pattern_name, game_state
+    global laser_x, laser_timer
+    global logic_round_active, logic_round_timer
+    global logic_cooldown, logic_form_index
+    global logic_boss_blue, logic_should_attack
+    global logic_feedback, logic_feedback_timer
+    global score_saved, final_score
+    global game_start_ticks, final_survival_time
+
+    player = Player()
+    bullets = []
+    shots = []
+
+    boss_index = 0
+    boss_hp = BOSSES[boss_index]["hp"]
+    boss_max_hp = boss_hp
+
+    frame = 0
+    pattern_timer = 0
+    pattern_index = 0
+    current_pattern_name = "준비"
+
+    laser_x = None
+    laser_timer = 0
+
+    logic_round_active = False
+    logic_round_timer = 0
+    logic_cooldown = 180
+    logic_form_index = 0
+    logic_boss_blue = True
+    logic_should_attack = True
+    logic_feedback = ""
+    logic_feedback_timer = 0
+
+    score_saved = False
+    final_score = 0
+    final_survival_time = 0.0
+    game_start_ticks = pygame.time.get_ticks()
+
+    game_state = "playing"
+
+
+# =========================
+# 이름·학번 입력 화면
+# =========================
+def draw_input_screen():
+    screen.fill(BLACK)
+    draw_background_stars()
+
+    title_image = BIG.render("SOUL JUMP", True, WHITE)
+    screen.blit(
+        title_image,
+        title_image.get_rect(center=(W // 2, 125))
+    )
+
+    draw_text(
+        "이름", name_box_rect.x - 75, name_box_rect.y + 10,
+        YELLOW if active_input == "name" else WHITE
+    )
+    pygame.draw.rect(
+        screen,
+        YELLOW if active_input == "name" else (100, 100, 120),
+        name_box_rect, 2
+    )
+
+    name_display = player_name if player_name else "이름을 입력하세요..."
+    draw_text(
+        name_display, name_box_rect.x + 12, name_box_rect.y + 12,
+        WHITE if player_name else (130, 130, 145)
+    )
+
+    draw_text(
+        "학번", id_box_rect.x - 75, id_box_rect.y + 10,
+        YELLOW if active_input == "student_id" else WHITE
+    )
+    pygame.draw.rect(
+        screen,
+        YELLOW if active_input == "student_id" else (100, 100, 120),
+        id_box_rect, 2
+    )
+
+    id_display = student_id if student_id else "학번을 입력하세요..."
+    draw_text(
+        id_display, id_box_rect.x + 12, id_box_rect.y + 12,
+        WHITE if student_id else (130, 130, 145)
+    )
+
+    if player_name.strip() and student_id.strip():
+        draw_centered_text(
+            "ENTER: 게임 시작",
+            pygame.Rect(200, 395, 400, 40), YELLOW, FONT
+        )
+    else:
+        draw_centered_text(
+            "이름과 학번을 모두 입력하세요",
+            pygame.Rect(200, 395, 400, 40), RED, FONT
+        )
+
+    draw_centered_text(
+        "TAB / 방향키로 입력칸 이동",
+        pygame.Rect(200, 435, 400, 30), CYAN, SMALL_FONT
+    )
+    draw_centered_text(
+        "ESC: 종료",
+        pygame.Rect(200, 470, 400, 30),
+        (165, 165, 190), SMALL_FONT
+    )
+
+
+# =========================
+# 결과 화면
+# =========================
+def draw_result_screen():
+    screen.fill(BLACK)
+
+    title_color = YELLOW if game_state == "win" else RED
+    title = (
+        "FINAL EXAM CLEARED!"
+        if game_state == "win"
+        else "GAME OVER"
+    )
+
+    title_image = BIG.render(title, True, title_color)
+    screen.blit(
+        title_image,
+        title_image.get_rect(center=(W // 2, 42))
+    )
+
+    left_panel = pygame.Rect(25, 85, 300, 420)
+    right_panel = pygame.Rect(345, 85, 430, 420)
+
+    pygame.draw.rect(
+        screen, (25, 22, 42), left_panel, border_radius=10
+    )
+    pygame.draw.rect(
+        screen, CYAN, left_panel, 2, border_radius=10
+    )
+    pygame.draw.rect(
+        screen, (25, 22, 42), right_panel, border_radius=10
+    )
+    pygame.draw.rect(
+        screen, PURPLE, right_panel, 2, border_radius=10
+    )
+
+    draw_text("점수 확인", 45, 105, CYAN, BIG)
+    draw_text(f"이름: {player_name}", 48, 175, WHITE)
+    draw_text(f"학번: {student_id}", 48, 215, WHITE)
+    draw_text(f"최종 점수: {final_score:,}점", 48, 270, YELLOW)
+    draw_text(
+        f"생존시간: {final_survival_time:.1f}초",
+        48, 315, GREEN
+    )
+
+    draw_text(
+        "결과: 승리" if game_state == "win" else "결과: 게임 오버",
+        48, 355, GREEN if game_state == "win" else RED
+    )
+    draw_text("랭킹은 가장 오래 생존한", 48, 405, WHITE, SMALL_FONT)
+    draw_text("기록을 기준으로 합니다.", 48, 427, WHITE, SMALL_FONT)
+
+    draw_text("생존시간 랭킹", 365, 105, PURPLE, BIG)
+    draw_text(
+        "순위       학번          이름       생존시간",
+        365, 160, CYAN, SMALL_FONT
+    )
+
+    pygame.draw.line(
+        screen, (90, 85, 125),
+        (365, 184), (755, 184), 1
+    )
+
+    ranked_leaderboard = sorted(
+        [row for row in leaderboard if "survival_time" in row],
+        key=lambda row: float(row.get("survival_time", 0)),
+        reverse=True
+    )
+
+    for rank, row in enumerate(ranked_leaderboard[:10], start=1):
+        y = 195 + (rank - 1) * 27
+
+        name = str(row.get("name", "알 수 없음"))[:7]
+        sid = str(row.get("student_id", "-"))[:10]
+        survival_time = float(row.get("survival_time", 0))
+
+        highlight = sid == student_id and name == player_name
+
+        draw_text(
+            f"{rank:>2}.   {sid:<10} {name:<7} "
+            f"{survival_time:>6.1f}초",
+            365, y, YELLOW if highlight else WHITE, SMALL_FONT
+        )
+
+    if not ranked_leaderboard:
+        draw_text("아직 기록이 없습니다.", 365, 205, WHITE)
+
+    draw_centered_text(
+        "ENTER: 규칙 설명으로 돌아가기",
+        pygame.Rect(130, 520, 540, 35), YELLOW, FONT
+    )
+    draw_centered_text(
+        "ESC: 종료",
+        pygame.Rect(0, 560, W, 25),
+        (165, 165, 190), SMALL_FONT
+    )
+
+
+# =========================
+# 메인 루프
+# =========================
+running = True
+
+while running:
+    clock.tick(60)
+
+    if screen_mode == "playing":
+        frame += 1
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+            continue
+
+        # 규칙 화면
+        if screen_mode == "rules":
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+
+                elif event.key in (
+                    pygame.K_RETURN, pygame.K_KP_ENTER
+                ):
+                    player_name = ""
+                    student_id = ""
+                    active_input = "name"
+
+                    screen_mode = "input"
+                    input_mode = True
+                    pygame.key.start_text_input()
+            continue
+
+        # 이름 및 학번 입력
+        if input_mode:
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+
+                elif event.key in (
+                    pygame.K_RETURN, pygame.K_KP_ENTER
+                ):
+                    if player_name.strip() and student_id.strip():
+                        input_mode = False
+                        screen_mode = "playing"
+                        pygame.key.stop_text_input()
+                        reset_game()
+
+                elif event.key == pygame.K_BACKSPACE:
+                    if active_input == "name":
+                        player_name = player_name[:-1]
+                    else:
+                        student_id = student_id[:-1]
+
+                elif event.key in (
+                    pygame.K_TAB, pygame.K_UP, pygame.K_DOWN
+                ):
+                    active_input = (
+                        "student_id" if active_input == "name"
+                        else "name"
+                    )
+
+            elif event.type == pygame.TEXTINPUT:
+                if active_input == "name" and len(player_name) < 10:
+                    player_name += event.text
+
+                elif active_input == "student_id" and len(student_id) < 15:
+                    if event.text.isdigit():
+                        student_id += event.text
+
+            elif (
+                event.type == pygame.MOUSEBUTTONDOWN
+                and event.button == 1
+            ):
+                if name_box_rect.collidepoint(event.pos):
+                    active_input = "name"
+                elif id_box_rect.collidepoint(event.pos):
+                    active_input = "student_id"
+
+            continue
+
+        # 게임 중 키 입력
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                running = False
+
+            elif game_state == "playing":
+                if event.key == pygame.K_SPACE:
+                    player.do_jump()
+
+                elif event.key == pygame.K_e:
+                    if logic_round_active:
+                        if logic_should_attack:
+                            finish_logic_round(
+                                True, "정답! 공격 성공"
+                            )
+                        else:
+                            finish_logic_round(False, "")
+                    elif player.shoot_cooldown <= 0:
+                        shots.append(
+                            Shot(player.x, player.y - player.jump)
+                        )
+                        player.shoot_cooldown = 12
+
+            elif event.key in (
+                pygame.K_RETURN, pygame.K_KP_ENTER
+            ):
+                screen_mode = "rules"
+                input_mode = False
+                pygame.key.stop_text_input()
+
+    if not running:
+        break
+
+    if screen_mode == "rules":
+        draw_rules_screen()
+        pygame.display.flip()
+        continue
+
+    if input_mode:
+        draw_input_screen()
+        pygame.display.flip()
+        continue
+
+    # =========================
+    # 게임 진행
+    # =========================
+    if game_state == "playing":
+        keys = pygame.key.get_pressed()
+        player.update(keys)
+
+        if logic_feedback_timer > 0:
+            logic_feedback_timer -= 1
+
+        if logic_round_active:
+            logic_round_timer -= 1
+
+            if logic_round_timer <= 0:
+                if logic_should_attack:
+                    finish_logic_round(False, "")
+                else:
+                    finish_logic_round(
+                        True, "정답! 공격 금지 성공"
+                    )
+        else:
+            logic_cooldown -= 1
+
+            if logic_cooldown <= 0:
+                start_logic_round()
+
+        # 패턴 간격: 기본 약 3초
+        pattern_timer += 1
+        interval = max(
+            95,
+            int(180 / BOSSES[boss_index]["speed"])
+        )
+
+        if pattern_timer >= interval:
+            pattern_timer = 0
+            spawn_pattern()
+
+        # 레이저 갱신
+        if laser_timer > 0:
+            laser_timer -= 1
+
+        if laser_timer <= 0:
+            laser_x = None
+
+        # 플레이어 공격탄
+        for shot in shots[:]:
+            shot.update()
+
+            if shot.y < 0:
+                shots.remove(shot)
+                continue
+
+            if math.hypot(shot.x - 400, shot.y - 85) < 32:
+                shots.remove(shot)
+                boss_hp -= 4
+
+        # 보스 처치 확인
+        if boss_hp <= 0:
+            game_state = "win"
+
+        # 적 탄환과 충돌
+        for bullet in bullets[:]:
+            bullet.update()
+
+            if not bullet.alive():
+                bullets.remove(bullet)
+                continue
+
+            # 지상 탄환은 점프 중 회피
+            if bullet.ground and player.jump_time > 0:
+                continue
+
+            distance = math.hypot(
+                bullet.x - player.x,
+                bullet.y - (player.y - player.jump)
+            )
+
+            if distance < bullet.r + player.r:
+                bullets.remove(bullet)
+                damage_player()
+
+                if game_state != "playing":
+                    break
+
+        # 레이저 충돌
+        if (
+            game_state == "playing"
+            and laser_x is not None
+            and laser_timer <= 18
+            and abs(player.x - laser_x) < 10
+        ):
+            damage_player()
+
+    # =========================
+    # 점수 및 랭킹 저장
+    # =========================
+    if game_state in ("win", "lose") and not score_saved:
+        final_survival_time = max(
+            0.0,
+            (pygame.time.get_ticks() - game_start_ticks) / 1000
+        )
+        final_survival_time = round(final_survival_time, 1)
+
+        survival_bonus = max(0, 6000 - frame * 2)
+        hp_bonus = max(0, player.hp) * 500
+        win_bonus = 3000 if game_state == "win" else 0
+
+        final_score = survival_bonus + hp_bonus + win_bonus
+        result_text = "승리" if game_state == "win" else "게임 오버"
+
+        existing = next(
+            (
+                row for row in leaderboard
+                if str(row.get("name", "")) == player_name
+                and str(row.get("student_id", "")) == student_id
+            ),
+            None
+        )
+
+        if existing is None:
+            leaderboard.append({
+                "name": player_name,
+                "student_id": student_id,
+                "score": int(final_score),
+                "survival_time": final_survival_time,
+                "result": result_text,
+            })
+        else:
+            old_time = float(existing.get("survival_time", 0))
+
+            if final_survival_time > old_time:
+                existing["survival_time"] = final_survival_time
+                existing["score"] = int(final_score)
+                existing["result"] = result_text
+
+        leaderboard.sort(
+            key=lambda row: float(row.get("survival_time", 0)),
+            reverse=True
+        )
+        leaderboard = leaderboard[:100]
+
+        try:
+            LEADERBOARD_FILE.write_text(
+                json.dumps(
+                    leaderboard, ensure_ascii=False, indent=2
+                ),
+                encoding="utf-8"
+            )
+        except OSError:
+            pass
+
+        score_saved = True
+
+    # =========================
+    # 화면 렌더링
+    # =========================
+    draw_arena()
+    draw_laser()
+
+    for bullet in bullets:
+        bullet.draw()
+
+    for shot in shots:
+        shot.draw()
+
+    player.draw()
+
+    draw_text(
+        "이동: 방향키/WASD  점프: SPACE  공격: E",
+        100, 555, CYAN, SMALL_FONT
+    )
+
+    if game_state in ("win", "lose"):
+        draw_result_screen()
+
+    pygame.display.flip()
+
+pygame.quit()
