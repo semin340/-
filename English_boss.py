@@ -519,10 +519,10 @@ def finish_quiz(correct):
     quiz_feedback_timer = 90
 
     if correct:
-        quiz_feedback = "CORRECT! BOSS DAMAGE +20"
+        quiz_feedback = "정답! 보스 HP -20"
         boss_hp -= 20
     else:
-        quiz_feedback = "WRONG! HP -1"
+        quiz_feedback = "오답! HP -1"
         if player.invincible <= 0:
             player.hp -= 1
             player.invincible = 75
@@ -569,7 +569,7 @@ def draw_arena():
     pygame.draw.circle(screen, BLACK, (bx - 11, by - 4), 4)
     pygame.draw.circle(screen, BLACK, (bx + 11, by - 4), 4)
 
-    draw_text("ENGLISH MASTER", 120, 14, ORANGE, BIG)
+    draw_text("영어 마스터", 120, 14, ORANGE, BIG)
 
     hp_bar = pygame.Rect(120, 75, 960, 20)
     pygame.draw.rect(screen, (65, 30, 45), hp_bar)
@@ -604,7 +604,7 @@ def draw_arena():
         pygame.draw.rect(screen, (27, 25, 48), panel, border_radius=14)
         pygame.draw.rect(screen, YELLOW, panel, 3, border_radius=14)
 
-        title = SMALL.render("VOCABULARY CHALLENGE", True, YELLOW)
+        title = SMALL.render("단어 문제", True, YELLOW)
         screen.blit(title, title.get_rect(center=(panel.centerx, 285)))
 
         word_image = WORD_FONT.render(quiz_word[0], True, CYAN)
