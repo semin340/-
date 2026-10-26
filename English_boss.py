@@ -1,0 +1,830 @@
+
+import math
+import random
+import pygame
+
+pygame.init()
+
+# =========================
+# 기본 설정 - 전체 화면 중앙 정렬
+# =========================
+W, H = 1200, 800  # 게임 내부 기준 해상도
+
+display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+DISPLAY_W, DISPLAY_H = display.get_size()
+
+# 모든 게임 요소는 이 화면에 그린 뒤 모니터 크기에 맞춰 출력
+screen = pygame.Surface((W, H))
+
+pygame.display.set_caption("SOUL JUMP - 영어 보스")
+clock = pygame.time.Clock()
+
+FONT = pygame.font.SysFont("malgungothic", 28)
+BIG = pygame.font.SysFont("malgungothic", 44, bold=True)
+SMALL = pygame.font.SysFont("malgungothic", 20)
+WORD_FONT = pygame.font.SysFont("arial", 34, bold=True)
+WORD_BULLET_FONT = pygame.font.SysFont("arial", 22, bold=True)
+
+BLACK = (10, 8, 20)
+WHITE = (245, 245, 255)
+RED = (255, 65, 95)
+CYAN = (80, 230, 255)
+PURPLE = (175, 90, 255)
+YELLOW = (255, 220, 80)
+ORANGE = (255, 150, 55)
+GREEN = (100, 255, 150)
+PINK = (255, 100, 190)
+
+# 전투장: 기준 해상도 중앙에 배치
+ARENA = pygame.Rect(120, 190, 960, 480)
+
+BOSS = {
+    "name": "영어 마스터",
+    "color": (255, 190, 70),
+    "hp": 300,
+    "speed": 1.2,
+}
+
+PATTERN_COUNT = 13
+QUIZ_TIME_MAX = 300
+
+BOSS_X = ARENA.centerx
+BOSS_Y = 125
+
+# =========================
+# 영어 단어 퀴즈
+# =========================
+WORDS = [
+    ("apple", "사과"),
+    ("brave", "용감한"),
+    ("dream", "꿈"),
+    ("journey", "여행"),
+    ("wisdom", "지혜"),
+    ("courage", "용기"),
+    ("freedom", "자유"),
+    ("victory", "승리"),
+    ("ancient", "고대의"),
+    ("discover", "발견하다"),
+    ("protect", "보호하다"),
+    ("improve", "향상시키다"),
+    ("challenge", "도전"),
+    ("knowledge", "지식"),
+    ("imagine", "상상하다"),
+]
+
+
+# =========================
+# 플레이어
+# =========================
+class Player:
+    def __init__(self):
+        self.x = ARENA.centerx
+        self.y = ARENA.bottom - 70
+        self.r = 12
+        self.hp = 5
+        self.jump = 0
+        self.jump_time = 0
+        self.jump_cooldown = 0
+        self.invincible = 0
+        self.shoot_cooldown = 0
+
+    def update(self, keys):
+        speed = 5
+
+        dx = (
+            int(keys[pygame.K_RIGHT] or keys[pygame.K_d])
+            - int(keys[pygame.K_LEFT] or keys[pygame.K_a])
+        )
+        dy = (
+            int(keys[pygame.K_DOWN] or keys[pygame.K_s])
+            - int(keys[pygame.K_UP] or keys[pygame.K_w])
+        )
+
+        if dx != 0 and dy != 0:
+            speed_factor = 1 / math.sqrt(2)
+        else:
+            speed_factor = 1
+
+        self.x += dx * speed * speed_factor
+        self.y += dy * speed * speed_factor
+
+        self.x = max(ARENA.left + 20, min(ARENA.right - 20, self.x))
+        self.y = max(ARENA.top + 20, min(ARENA.bottom - 20, self.y))
+
+        if self.jump_cooldown > 0:
+            self.jump_cooldown -= 1
+        if self.invincible > 0:
+            self.invincible -= 1
+        if self.shoot_cooldown > 0:
+            self.shoot_cooldown -= 1
+
+        if self.jump_time > 0:
+            self.jump_time -= 1
+            t = 1 - self.jump_time / 32
+            self.jump = math.sin(t * math.pi) * 60
+        else:
+            self.jump = 0
+
+    def do_jump(self):
+        if self.jump_cooldown <= 0 and self.jump_time <= 0:
+            self.jump_time = 32
+            self.jump_cooldown = 48
+
+    def draw(self):
+        pygame.draw.ellipse(
+            screen, (65, 55, 80),
+            (self.x - 15, self.y - 6, 30, 12)
+        )
+
+        draw_y = int(self.y - self.jump)
+
+        if self.invincible > 0 and (self.invincible // 4) % 2 == 0:
+            return
+
+        points = [
+            (self.x, draw_y - 16),
+            (self.x + 15, draw_y - 3),
+            (self.x + 11, draw_y + 11),
+            (self.x, draw_y + 17),
+            (self.x - 11, draw_y + 11),
+            (self.x - 15, draw_y - 3),
+        ]
+
+        pygame.draw.polygon(screen, RED, points)
+        pygame.draw.circle(screen, WHITE, (int(self.x - 4), draw_y), 3)
+        pygame.draw.circle(screen, WHITE, (int(self.x + 4), draw_y), 3)
+
+
+# =========================
+# 일반 탄환
+# =========================
+class Bullet:
+    def __init__(
+        self, x, y, vx, vy, color,
+        radius=9, ground=False, life=360, ax=0, ay=0
+    ):
+        self.x = float(x)
+        self.y = float(y)
+        self.vx = vx
+        self.vy = vy
+        self.ax = ax
+        self.ay = ay
+        self.color = color
+        self.r = radius
+        self.ground = ground
+        self.life = life
+
+    def update(self):
+        self.vx += self.ax
+        self.vy += self.ay
+        self.x += self.vx
+        self.y += self.vy
+        self.life -= 1
+
+    def draw(self):
+        pygame.draw.circle(
+            screen, self.color,
+            (int(self.x), int(self.y)), self.r
+        )
+        pygame.draw.circle(
+            screen, WHITE,
+            (int(self.x - 2), int(self.y - 2)),
+            max(1, self.r // 3)
+        )
+
+    def alive(self):
+        return (
+            self.life > 0
+            and -50 < self.x < W + 50
+            and -60 < self.y < H + 60
+        )
+
+
+# =========================
+# 글자 탄환
+# =========================
+class WordBullet(Bullet):
+    def __init__(self, x, y, vx, vy, word, color):
+        super().__init__(
+            x, y, vx, vy, color,
+            radius=11, ground=False, life=300
+        )
+        self.word = word
+
+    def draw(self):
+        image = WORD_BULLET_FONT.render(self.word, True, self.color)
+        rect = image.get_rect(center=(int(self.x), int(self.y)))
+        screen.blit(image, rect)
+
+
+# =========================
+# 플레이어 공격
+# =========================
+class Shot:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.vy = -10
+        self.r = 6
+
+    def update(self):
+        self.y += self.vy
+
+    def draw(self):
+        pygame.draw.circle(
+            screen, CYAN,
+            (int(self.x), int(self.y)), self.r
+        )
+        pygame.draw.circle(
+            screen, WHITE,
+            (int(self.x), int(self.y)), 2
+        )
+
+
+# =========================
+# 게임 상태
+# =========================
+player = Player()
+bullets = []
+shots = []
+
+boss_hp = BOSS["hp"]
+boss_max_hp = boss_hp
+
+frame = 0
+pattern_timer = 0
+pattern_index = 0
+current_pattern_name = "VOCABULARY TEST"
+
+game_state = "playing"
+
+quiz_active = False
+quiz_timer = 0
+quiz_cooldown = 100
+quiz_feedback = ""
+quiz_feedback_timer = 0
+quiz_word = None
+quiz_choices = []
+quiz_answer = 0
+
+
+# =========================
+# 탄막 생성 도구
+# =========================
+def add_bullet(
+    x, y, angle, speed, color,
+    radius=9, ground=False, ax=0, ay=0
+):
+    vx = math.cos(angle) * speed
+    vy = math.sin(angle) * speed
+    bullets.append(
+        Bullet(x, y, vx, vy, color, radius, ground, 360, ax, ay)
+    )
+
+
+def aim_angle(x1, y1, x2, y2):
+    return math.atan2(y2 - y1, x2 - x1)
+
+
+def add_word_bullet(x, y, angle, speed, word=None, color=None):
+    if word is None:
+        word = random.choice(WORDS)[0]
+    if color is None:
+        color = random.choice([CYAN, PURPLE, PINK, ORANGE])
+
+    bullets.append(
+        WordBullet(
+            x, y,
+            math.cos(angle) * speed,
+            math.sin(angle) * speed,
+            word, color
+        )
+    )
+
+
+# =========================
+# 보스 패턴 13종
+# =========================
+def spawn_pattern():
+    global pattern_index, current_pattern_name
+
+    p = pattern_index
+
+    left = ARENA.left + 15
+    right = ARENA.right - 15
+    top = ARENA.top + 15
+    bottom = ARENA.bottom - 15
+
+    boss_x, boss_y = BOSS_X, BOSS_Y
+
+    if p == 0:
+        current_pattern_name = "ALPHABET RAIN"
+        for _ in range(24):
+            x = random.randint(left, right)
+            y = random.randint(top - 120, top)
+            add_bullet(x, y, math.pi / 2, random.uniform(3.0, 4.5), CYAN, radius=8)
+
+    elif p == 1:
+        current_pattern_name = "GRAMMAR CROSS"
+        for i in range(9):
+            y = top + i * 48
+            if y < bottom:
+                add_bullet(left, y, 0, 3.5, YELLOW, radius=9)
+                add_bullet(right, y, math.pi, 3.5, PURPLE, radius=9)
+
+    elif p == 2:
+        current_pattern_name = "ASGORE LETTER RING"
+        letters = ["A", "E", "R", "S", "T", "O", "N"]
+        ring_count = 7
+        letters_per_ring = 4
+
+        for ring in range(ring_count):
+            base_angle = math.pi / 2 + ring * math.tau / ring_count
+            offset = math.pi / 18 if ring % 2 else 0
+
+            for j in range(letters_per_ring):
+                spread = (j - (letters_per_ring - 1) / 2) * 0.12
+                angle = base_angle + offset + spread
+                word = random.choice(letters)
+                color = ORANGE if ring % 2 == 0 else PINK
+                speed = 3.0 + (j % 2) * 0.4
+                add_word_bullet(boss_x, boss_y, angle, speed, word, color)
+
+    elif p == 3:
+        current_pattern_name = "PUNCTUATION STORM"
+        for i in range(8):
+            x = left + i * (right - left) / 7
+            add_bullet(x, top, math.pi / 2 + 0.15, 4.0, RED, radius=9)
+            add_bullet(right - (x - left), bottom, -math.pi / 2 - 0.15, 4.0, GREEN, radius=9)
+
+    elif p == 4:
+        current_pattern_name = "SENTENCE WAVE"
+        for i in range(13):
+            y = top + i * 35
+            if y > bottom:
+                break
+            direction = 1 if i % 2 == 0 else -1
+            bullets.append(
+                Bullet(
+                    left if direction == 1 else right,
+                    y, direction * 3.0, 0,
+                    CYAN if direction == 1 else PURPLE,
+                    radius=8, ax=0, ay=math.sin(i) * 0.035
+                )
+            )
+
+    elif p == 5:
+        current_pattern_name = "WISDOM SOUL"
+        source_y = ARENA.centery
+        left_x = ARENA.left + 35
+        right_x = ARENA.right - 35
+
+        for i in range(5):
+            spread = (i - 2) * 0.14
+            speed = 3.2 + (i % 2) * 0.4
+
+            left_angle = aim_angle(left_x, source_y, player.x, player.y) + spread
+            add_word_bullet(left_x, source_y, left_angle, speed, color=PURPLE)
+
+            right_angle = aim_angle(right_x, source_y, player.x, player.y) - spread
+            add_word_bullet(right_x, source_y, right_angle, speed, color=CYAN)
+
+    elif p == 6:
+        current_pattern_name = "FLOWER SPIRAL"
+        cx, cy = ARENA.centerx, ARENA.top + 100
+        petal_count = 8
+        bullets_per_petal = 3
+        rotation = frame * 0.018
+
+        for petal in range(petal_count):
+            base_angle = math.tau * petal / petal_count + rotation
+            for j in range(bullets_per_petal):
+                angle = base_angle + (j - 1) * 0.10
+                speed = 2.5 + j * 0.35
+                add_bullet(
+                    cx, cy, angle, speed,
+                    GREEN if petal % 2 == 0 else PINK,
+                    radius=8
+                )
+
+    elif p == 7:
+        current_pattern_name = "FINAL EXAM"
+        for i in range(11):
+            x = left + i * (right - left) / 10
+            direction = 1 if i % 2 == 0 else -1
+            bullets.append(
+                Bullet(x, top, direction * 1.1, 3.2, ORANGE, radius=9,
+                       ax=-direction * 0.025)
+            )
+            bullets.append(
+                Bullet(x, bottom, -direction * 1.1, -3.2, CYAN, radius=9,
+                       ax=direction * 0.025)
+            )
+
+    elif p == 8:
+        current_pattern_name = "FAN SHOT"
+        count = 11
+        center_angle = aim_angle(boss_x, boss_y, player.x, player.y)
+        spread = math.radians(58)
+
+        for i in range(count):
+            angle = center_angle - spread / 2 + spread * i / (count - 1)
+            add_bullet(boss_x, boss_y, angle, 3.4, ORANGE, radius=9)
+
+    elif p == 9:
+        current_pattern_name = "ZIGZAG DANCE"
+        for i in range(10):
+            y = top + i * 43
+            if y > bottom:
+                break
+            direction = 1 if i % 2 == 0 else -1
+            start_x = left if direction == 1 else right
+            bullets.append(
+                Bullet(
+                    start_x, y, direction * 3.5, 0,
+                    PINK if direction == 1 else CYAN,
+                    radius=9,
+                    ay=0.045 if i % 2 == 0 else -0.045
+                )
+            )
+
+    elif p == 10:
+        current_pattern_name = "TARGET BURST"
+        base_angle = aim_angle(boss_x, boss_y, player.x, player.y - player.jump)
+        for offset in [-0.18, 0, 0.18]:
+            add_bullet(boss_x, boss_y, base_angle + offset, 4.0, RED, radius=9)
+
+    elif p == 11:
+        current_pattern_name = "ROTATING CROSS"
+        cx, cy = ARENA.centerx, ARENA.top + 100
+        count = 8
+        for i in range(count):
+            angle = math.tau * i / count + frame * 0.045
+            add_bullet(
+                cx, cy, angle, 3.0,
+                PURPLE if i % 2 == 0 else CYAN,
+                radius=9
+            )
+
+    else:
+        current_pattern_name = "DOUBLE ARC"
+        for i in range(7):
+            y = ARENA.top + 50 + i * 58
+            bullets.append(
+                Bullet(left, y, 3.0, -0.15 + i * 0.045,
+                       YELLOW, radius=9, ay=0.025)
+            )
+            bullets.append(
+                Bullet(right, y, -3.0, 0.15 - i * 0.045,
+                       GREEN, radius=9, ay=-0.025)
+            )
+
+    pattern_index = (pattern_index + 1) % PATTERN_COUNT
+
+
+# =========================
+# 영어 퀴즈 시스템
+# =========================
+def start_quiz():
+    global quiz_active, quiz_timer
+    global quiz_word, quiz_choices, quiz_answer
+
+    quiz_word = random.choice(WORDS)
+    correct_meaning = quiz_word[1]
+    wrong_meanings = [
+        meaning for word, meaning in WORDS
+        if meaning != correct_meaning
+    ]
+
+    choices = random.sample(wrong_meanings, 3)
+    choices.append(correct_meaning)
+    random.shuffle(choices)
+
+    quiz_choices = choices
+    quiz_answer = choices.index(correct_meaning)
+    quiz_active = True
+    quiz_timer = QUIZ_TIME_MAX
+
+
+def finish_quiz(correct):
+    global quiz_active, quiz_cooldown
+    global quiz_feedback, quiz_feedback_timer, boss_hp
+    global game_state
+
+    if not quiz_active:
+        return
+
+    quiz_active = False
+    quiz_cooldown = 300
+    quiz_feedback_timer = 90
+
+    if correct:
+        quiz_feedback = "CORRECT! BOSS DAMAGE +20"
+        boss_hp -= 20
+    else:
+        quiz_feedback = "WRONG! HP -1"
+        if player.invincible <= 0:
+            player.hp -= 1
+            player.invincible = 75
+            if player.hp <= 0:
+                player.hp = 0
+                game_state = "lose"
+
+
+# =========================
+# 텍스트 출력
+# =========================
+def draw_text(text, x, y, color=WHITE, font=FONT):
+    image = font.render(str(text), True, color)
+    screen.blit(image, (int(x), int(y)))
+
+
+# =========================
+# 화면 그리기
+# =========================
+def draw_arena():
+    screen.fill(BLACK)
+
+    for i in range(55):
+        x = (i * 127 + 23) % W
+        y = (i * 83 + 17) % H
+        pygame.draw.circle(screen, (45, 40, 70), (x, y), 1)
+
+    pygame.draw.rect(screen, (20, 15, 35), ARENA)
+
+    for gx in range(ARENA.left + 40, ARENA.right, 40):
+        pygame.draw.line(screen, (32, 35, 65), (gx, ARENA.top), (gx, ARENA.bottom))
+
+    for gy in range(ARENA.top + 40, ARENA.bottom, 40):
+        pygame.draw.line(screen, (32, 35, 65), (ARENA.left, gy), (ARENA.right, gy))
+
+    pygame.draw.rect(screen, WHITE, ARENA, 3)
+
+    pulse = math.sin(frame * 0.06) * 5
+    bx, by = BOSS_X, BOSS_Y
+
+    pygame.draw.circle(screen, BOSS["color"], (bx, by), int(34 + pulse))
+    pygame.draw.circle(screen, WHITE, (bx - 11, by - 4), 8)
+    pygame.draw.circle(screen, WHITE, (bx + 11, by - 4), 8)
+    pygame.draw.circle(screen, BLACK, (bx - 11, by - 4), 4)
+    pygame.draw.circle(screen, BLACK, (bx + 11, by - 4), 4)
+
+    draw_text("ENGLISH MASTER", 120, 14, ORANGE, BIG)
+
+    hp_bar = pygame.Rect(120, 75, 960, 20)
+    pygame.draw.rect(screen, (65, 30, 45), hp_bar)
+
+    hp_ratio = max(0, boss_hp / boss_max_hp)
+    pygame.draw.rect(
+        screen, BOSS["color"],
+        (hp_bar.x, hp_bar.y, int(hp_bar.width * hp_ratio), hp_bar.height)
+    )
+    pygame.draw.rect(screen, WHITE, hp_bar, 2)
+
+    draw_text("PLAYER HP", 120, 108, RED, SMALL)
+
+    for i in range(5):
+        color = RED if i < player.hp else (65, 35, 45)
+        pygame.draw.rect(
+            screen, color,
+            (235 + i * 32, 112, 25, 14),
+            border_radius=3
+        )
+
+    shown_pattern = pattern_index + 1
+    if shown_pattern > PATTERN_COUNT:
+        shown_pattern = 1
+
+    draw_text(f"PATTERN {shown_pattern}/{PATTERN_COUNT}", 850, 108, YELLOW, SMALL)
+    draw_text(current_pattern_name, 120, 155, CYAN, SMALL)
+
+    if quiz_active and quiz_word:
+        panel = pygame.Rect(350, 255, 500, 300)
+
+        pygame.draw.rect(screen, (27, 25, 48), panel, border_radius=14)
+        pygame.draw.rect(screen, YELLOW, panel, 3, border_radius=14)
+
+        title = SMALL.render("VOCABULARY CHALLENGE", True, YELLOW)
+        screen.blit(title, title.get_rect(center=(panel.centerx, 285)))
+
+        word_image = WORD_FONT.render(quiz_word[0], True, CYAN)
+        screen.blit(word_image, word_image.get_rect(center=(panel.centerx, 330)))
+
+        instruction = SMALL.render("뜻을 선택하세요! (1 / 2 / 3 / 4)", True, WHITE)
+        screen.blit(instruction, instruction.get_rect(center=(panel.centerx, 365)))
+
+        for i, meaning in enumerate(quiz_choices):
+            draw_text(f"{i + 1}. {meaning}", panel.x + 70, 390 + i * 32, WHITE, SMALL)
+
+        bar_x = ARENA.left
+        bar_y = ARENA.bottom + 12
+        bar_w = ARENA.width
+        bar_h = 16
+
+        time_ratio = max(0.0, min(1.0, quiz_timer / QUIZ_TIME_MAX))
+        remaining_w = int(bar_w * time_ratio)
+
+        if time_ratio > 0.5:
+            bar_color = GREEN
+        elif time_ratio > 0.2:
+            bar_color = ORANGE
+        else:
+            bar_color = RED
+
+        pygame.draw.rect(screen, (55, 30, 45), (bar_x, bar_y, bar_w, bar_h))
+
+        if remaining_w > 0:
+            pygame.draw.rect(screen, bar_color, (bar_x, bar_y, remaining_w, bar_h))
+
+        pygame.draw.rect(screen, WHITE, (bar_x, bar_y, bar_w, bar_h), 2)
+
+        seconds_left = max(0, math.ceil(quiz_timer / 60))
+        timer_label = SMALL.render(f"TIME: {seconds_left}s", True, WHITE)
+        screen.blit(timer_label, timer_label.get_rect(center=(ARENA.centerx, bar_y + 34)))
+
+    elif quiz_feedback_timer > 0:
+        color = GREEN if "CORRECT" in quiz_feedback else RED
+        feedback_image = SMALL.render(quiz_feedback, True, color)
+        screen.blit(feedback_image, feedback_image.get_rect(center=(ARENA.centerx, 170)))
+
+
+# =========================
+# 게임 재시작
+# =========================
+def restart_game():
+    global player, bullets, shots
+    global boss_hp, frame, pattern_timer, pattern_index
+    global current_pattern_name, game_state
+    global quiz_active, quiz_timer, quiz_cooldown
+    global quiz_feedback, quiz_feedback_timer
+    global quiz_word, quiz_choices, quiz_answer
+
+    player = Player()
+    bullets = []
+    shots = []
+    boss_hp = BOSS["hp"]
+
+    frame = 0
+    pattern_timer = 0
+    pattern_index = 0
+    current_pattern_name = "VOCABULARY TEST"
+
+    quiz_active = False
+    quiz_timer = 0
+    quiz_cooldown = 100
+    quiz_feedback = ""
+    quiz_feedback_timer = 0
+    quiz_word = None
+    quiz_choices = []
+    quiz_answer = 0
+    game_state = "playing"
+
+
+# =========================
+# 메인 루프
+# =========================
+running = True
+
+while running:
+    clock.tick(60)
+    frame += 1
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                running = False
+
+            if game_state == "playing":
+                if event.key == pygame.K_SPACE:
+                    player.do_jump()
+
+                if quiz_active:
+                    key_map = {
+                        pygame.K_1: 0,
+                        pygame.K_2: 1,
+                        pygame.K_3: 2,
+                        pygame.K_4: 3,
+                        pygame.K_KP1: 0,
+                        pygame.K_KP2: 1,
+                        pygame.K_KP3: 2,
+                        pygame.K_KP4: 3,
+                    }
+
+                    if event.key in key_map:
+                        finish_quiz(key_map[event.key] == quiz_answer)
+
+                elif event.key == pygame.K_u:
+                    if player.shoot_cooldown <= 0:
+                        shots.append(Shot(player.x, player.y - player.jump))
+                        player.shoot_cooldown = 12
+
+            elif event.key == pygame.K_RETURN:
+                restart_game()
+
+    if game_state == "playing":
+        keys = pygame.key.get_pressed()
+        player.update(keys)
+
+        if quiz_feedback_timer > 0:
+            quiz_feedback_timer -= 1
+
+        if quiz_active:
+            quiz_timer -= 1
+            if quiz_timer <= 0:
+                finish_quiz(False)
+        else:
+            quiz_cooldown -= 1
+            if quiz_cooldown <= 0:
+                start_quiz()
+
+        pattern_timer += 1
+        interval = max(65, int(150 / BOSS["speed"]))
+
+        if pattern_timer >= interval:
+            pattern_timer = 0
+            spawn_pattern()
+
+        for shot in shots[:]:
+            shot.update()
+
+            if shot.y < 0:
+                shots.remove(shot)
+                continue
+
+            if math.hypot(shot.x - BOSS_X, shot.y - BOSS_Y) < 43:
+                shots.remove(shot)
+                boss_hp -= 4
+
+        if boss_hp <= 0:
+            boss_hp = 0
+            game_state = "win"
+
+        for bullet in bullets[:]:
+            bullet.update()
+
+            if not bullet.alive():
+                bullets.remove(bullet)
+                continue
+
+            if bullet.ground and player.jump_time > 0:
+                continue
+
+            distance = math.hypot(
+                bullet.x - player.x,
+                bullet.y - (player.y - player.jump)
+            )
+
+            if distance < bullet.r + player.r:
+                bullets.remove(bullet)
+
+                if player.invincible <= 0:
+                    player.hp -= 1
+                    player.invincible = 75
+
+                    if player.hp <= 0:
+                        player.hp = 0
+                        game_state = "lose"
+
+    # =========================
+    # 렌더링
+    # =========================
+    draw_arena()
+
+    for bullet in bullets:
+        bullet.draw()
+
+    for shot in shots:
+        shot.draw()
+
+    player.draw()
+
+    draw_text(
+        "MOVE: WASD/ARROWS   JUMP: SPACE   ATTACK: U",
+        120, 720, CYAN, SMALL
+    )
+    draw_text(
+        "QUIZ: 1-4 / NUMPAD 1-4",
+        120, 750, YELLOW, SMALL
+    )
+
+    if game_state == "win":
+        screen.fill(BLACK)
+        draw_text("VICTORY!!", 320, 275, YELLOW, BIG)
+        draw_text("보스의 최종 시험을 완벽하게 돌파했습니다!", 330, 350, CYAN, FONT)
+        draw_text("ENTER: 다시 도전     ESC: 종료", 370, 425, WHITE, FONT)
+
+    elif game_state == "lose":
+        screen.fill(BLACK)
+        draw_text("GAME OVER", 490, 275, RED, BIG)
+        draw_text("도전에 실패했습니다.", 430, 350, WHITE, FONT)
+        draw_text("ENTER: 다시 도전     ESC: 종료", 420, 425, WHITE, FONT)
+
+    # 내부 화면을 실제 모니터 전체에 맞춰 출력
+    scaled_screen = pygame.transform.scale(screen, (DISPLAY_W, DISPLAY_H))
+    display.blit(scaled_screen, (0, 0))
+    pygame.display.flip()
+
+pygame.quit()
