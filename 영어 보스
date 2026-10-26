@@ -812,15 +812,15 @@ while running:
 
     if game_state == "win":
         screen.fill(BLACK)
-        draw_text("ENGLISH MASTER DEFEATED!", 320, 275, YELLOW, BIG)
-        draw_text("You conquered the English challenge!", 330, 350, CYAN, FONT)
-        draw_text("ENTER: RESTART     ESC: QUIT", 370, 425, WHITE, FONT)
+        draw_text("VICTORY!!", 320, 275, YELLOW, BIG)
+        draw_text("보스의 최종 시험을 완벽하게 돌파했습니다!", 330, 350, CYAN, FONT)
+        draw_text("ENTER: 다시 도전     ESC: 종료", 370, 425, WHITE, FONT)
 
     elif game_state == "lose":
         screen.fill(BLACK)
         draw_text("GAME OVER", 490, 275, RED, BIG)
-        draw_text("Study hard and try again!", 430, 350, WHITE, FONT)
-        draw_text("ENTER: RETRY     ESC: QUIT", 420, 425, WHITE, FONT)
+        draw_text("도전에 실패했습니다.", 430, 350, WHITE, FONT)
+        draw_text("ENTER: 다시 도전     ESC: 종료", 420, 425, WHITE, FONT)
 
     # 내부 화면을 실제 모니터 전체에 맞춰 출력
     scaled_screen = pygame.transform.scale(screen, (DISPLAY_W, DISPLAY_H))
