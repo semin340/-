@@ -1,0 +1,18 @@
+[
+  {
+    "name": "안성준",
+    "student_id": "10911",
+    "score": 2696,
+    "result": "게임 오버"
+  },
+  {
+    "name": "철수",
+    "student_id": "12334",
+    "stage": 1,
+    "status": "Lose",
+    "boss_hp_left": 104,
+    "player_hp_left": 0,
+    "score": 96,
+    "detail": "영어 보스 도전 중 패배 (잡은 체력: 96)"
+  }
+]
